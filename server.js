@@ -12,7 +12,7 @@ const admin = require('firebase-admin');
 
 // Initialize express app
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000; // ✅ FIXED: Uses environment port
 
 // ==========================================
 // 🎨 MIDDLEWARE - BEAUTY & POWER SETUP
@@ -504,9 +504,9 @@ app.get('/chat', (req, res) => {
 // 🚀 START SERVER - POWER ON!
 // ==========================================
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => { // ✅ FIXED: Binds to all network interfaces
     console.log('🎉 baeem Server Running!');
-    console.log('🌐 Visit: http://localhost:3000');
+    console.log('🌐 Visit: http://localhost:' + PORT); // ✅ FIXED: Dynamic port display
     console.log('🔥 Powered by Node.js + Express');
     console.log('💎 Professional Grade Activated');
     console.log('🇵🇰❤️🇨🇳 Pak-China Friendship Forever!');
