@@ -41,7 +41,7 @@ app.use(express.json());
 app.use(session({
     secret: 'baeem-super-secret-key-2025',
     resave: false,
-    saveUninitialized: false,
+    saveUnitialized: false,
     cookie: { secure: false, maxAge: 24 * 60 * 60 * 1000 } // 24 hours
 }));
 
@@ -100,6 +100,26 @@ admin.initializeApp({
 // 🏠 HOME PAGE - STUNNING LANDING
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// ✅ CRITICAL ADDITION: HEALTH CHECK ENDPOINT
+app.get('/health', (req, res) => {
+    res.status(200).json({ 
+        status: 'OK', 
+        message: 'BAEEM Backend is running perfectly!',
+        timestamp: Date.now(),
+        version: '1.0.0'
+    });
+});
+
+// ✅ CRITICAL ADDITION: API STATUS ENDPOINT  
+app.get('/api/status', (req, res) => {
+    res.json({ 
+        success: true, 
+        service: 'BAEEM Backend',
+        status: 'Operational',
+        timestamp: new Date().toISOString()
+    });
 });
 
 // 👤 LOGIN PAGE - ELEGANT DESIGN
