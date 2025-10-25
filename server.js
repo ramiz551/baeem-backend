@@ -12,7 +12,7 @@ const admin = require('firebase-admin');
 
 // Initialize express app
 const app = express();
-const PORT = process.env.PORT || 3000; // ✅ FIXED: Uses environment port
+const PORT = process.env.PORT || 3000;
 
 // ==========================================
 // 🎨 MIDDLEWARE - BEAUTY & POWER SETUP
@@ -41,25 +41,41 @@ app.use(express.json());
 app.use(session({
     secret: 'baeem-super-secret-key-2025',
     resave: false,
-    saveUnitialized: false,
-    cookie: { secure: false, maxAge: 24 * 60 * 60 * 1000 } // 24 hours
+    saveUninitialized: false,
+    cookie: { secure: false, maxAge: 24 * 60 * 60 * 1000 }
 }));
 
 // ================================
-// 🔐 ADMIN SECURITY - SUPER ADMIN ACCESS
+// 🔐 FIREBASE INITIALIZATION WITH ERROR HANDLING
 // ================================
 
-const ADMIN_EMAILS = [
-    'xyzdar6@gmail.com'  // ONLY YOU CAN ACCESS ADMIN PANEL
-];
+// ✅ CRITICAL FIX: Handle missing serviceAccountKey.json gracefully
+let firebaseInitialized = false;
 
-// Middleware to check if user is admin - CORRECTED VERSION
+try {
+    const serviceAccount = require('./serviceAccountKey.json');
+    admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount),
+        databaseURL: "https://hol-sell-marketplace-default-rtdb.firebaseio.com"
+    });
+    firebaseInitialized = true;
+    console.log('✅ Firebase Admin SDK initialized successfully');
+} catch (error) {
+    console.log('⚠️ Firebase service account not found - running in limited mode');
+    console.log('ℹ️ Health checks and basic routes will work, but Firebase features will be disabled');
+    firebaseInitialized = false;
+}
+
+// Admin security middleware (only if Firebase is initialized)
+const ADMIN_EMAILS = ['xyzdar6@gmail.com'];
 function requireAdmin(req, res, next) {
-    // FIXED: Check if user session exists and has email property
-    const userEmail = req.session.user ? req.session.user.email : null;
+    if (!firebaseInitialized) {
+        return res.status(503).send('Firebase service unavailable');
+    }
     
+    const userEmail = req.session.user ? req.session.user.email : null;
     if (userEmail && ADMIN_EMAILS.includes(userEmail)) {
-        next(); // Allow access
+        next();
     } else {
         res.status(403).send(`
             <h2>🚫 ACCESS DENIED</h2>
@@ -75,69 +91,81 @@ const storage = multer.diskStorage({
         cb(null, 'public/uploads/')
     },
     filename: function (req, file, cb) {
-        // Professional filename with original extension
         const fileExtension = file.originalname.split('.').pop();
         cb(null, Date.now() + '-' + Math.round(Math.random() * 1E9) + '.' + fileExtension);
     }
 });
 const upload = multer({ storage: storage });
 
-// Set EJS as template engine (beautiful pages)
+// Set EJS as template engine
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
-
-// Initialize Firebase Admin SDK with service account
-const serviceAccount = require('./serviceAccountKey.json');
-admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-    databaseURL: "https://hol-sell-marketplace-default-rtdb.firebaseio.com" // ✅ FIXED: Correct Firebase URL
-});
 
 // ==========================================
 // 🌟 ROUTES - WEBSITE PAGES
 // ==========================================
 
-// 🏠 HOME PAGE - STUNNING LANDING
+// 🏠 HOME PAGE
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// ✅ CRITICAL ADDITION: HEALTH CHECK ENDPOINT
+// ✅ CRITICAL: HEALTH CHECK ENDPOINT
 app.get('/health', (req, res) => {
     res.status(200).json({ 
         status: 'OK', 
         message: 'BAEEM Backend is running perfectly!',
+        firebase: firebaseInitialized ? 'Connected' : 'Disabled',
         timestamp: Date.now(),
         version: '1.0.0'
     });
 });
 
-// ✅ CRITICAL ADDITION: API STATUS ENDPOINT  
+// ✅ CRITICAL: API STATUS ENDPOINT
 app.get('/api/status', (req, res) => {
     res.json({ 
         success: true, 
         service: 'BAEEM Backend',
         status: 'Operational',
+        firebase: firebaseInitialized,
         timestamp: new Date().toISOString()
     });
 });
 
-// 👤 LOGIN PAGE - ELEGANT DESIGN
+// ✅ CRITICAL: ROOT API ENDPOINT
+app.get('/api', (req, res) => {
+    res.json({ 
+        message: 'Welcome to BAEEM Backend API',
+        status: 'Running',
+        firebase: firebaseInitialized,
+        endpoints: ['/health', '/api/status', '/api/messages', '/api/conversations']
+    });
+});
+
+// 👤 LOGIN PAGE
 app.get('/login', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'login.html'));
 });
 
-// 👤 REGISTER PAGE - MODERN DESIGN
+// 👤 REGISTER PAGE
 app.get('/register', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'register.html'));
 });
 
-// 🎌 LOGIN PROCESSING - PROFESSIONAL FIREBASE ADMIN
+// 🎌 LOGIN PROCESSING (Only if Firebase is initialized)
 app.post('/login', async (req, res) => {
+    if (!firebaseInitialized) {
+        return res.send(`
+            <script>
+                alert('Authentication service temporarily unavailable');
+                window.location.href = '/login';
+            </script>
+        `);
+    }
+
     try {
         const { email, password } = req.body;
         
-        // Input validation
         if (!email || !password) {
             return res.send(`
                 <script>
@@ -147,23 +175,19 @@ app.post('/login', async (req, res) => {
             `);
         }
 
-        // Firebase Admin authentication
         const userRecord = await admin.auth().getUserByEmail(email);
         
-        // Store user in session - CORRECTED: This creates req.session.user object
         req.session.user = {
             uid: userRecord.uid,
             email: userRecord.email,
             displayName: userRecord.displayName || 'User'
         };
 
-        // Login successful - redirect to dashboard
         res.redirect('/dashboard');
         
     } catch (error) {
         console.error('Login error:', error);
         
-        // Handle specific Firebase errors
         let errorMessage = 'Login failed. Please try again.';
         if (error.code === 'auth/user-not-found') {
             errorMessage = 'No account found with this email.';
@@ -180,8 +204,17 @@ app.post('/login', async (req, res) => {
     }
 });
 
-// 📝 REGISTER PROCESSING - PROFESSIONAL FIREBASE ADMIN
+// 📝 REGISTER PROCESSING (Only if Firebase is initialized)
 app.post('/register', async (req, res) => {
+    if (!firebaseInitialized) {
+        return res.send(`
+            <script>
+                alert('Registration service temporarily unavailable');
+                window.location.href = '/register';
+            </script>
+        `);
+    }
+
     try {
         const { email, password, displayName } = req.body;
         
@@ -194,14 +227,12 @@ app.post('/register', async (req, res) => {
             `);
         }
 
-        // Create user in Firebase Admin
         const userRecord = await admin.auth().createUser({
             email: email,
             password: password,
             displayName: displayName
         });
 
-        // Store user in session - CORRECTED: This creates req.session.user object
         req.session.user = {
             uid: userRecord.uid,
             email: userRecord.email,
@@ -229,25 +260,33 @@ app.post('/register', async (req, res) => {
     }
 });
 
-// 📊 USER DASHBOARD - PREMIUM DESIGN
+// 📊 USER DASHBOARD
 app.get('/dashboard', (req, res) => {
+    if (!firebaseInitialized) {
+        return res.send(`
+            <h2>Service Temporarily Unavailable</h2>
+            <p>Firebase services are currently unavailable. Please try again later.</p>
+            <a href="/">Return to Homepage</a>
+        `);
+    }
+    
     if (!req.session.user) {
         return res.redirect('/login');
     }
     res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
 });
 
-// 📦 POST AD PAGE - PROFESSIONAL FORM
+// 📦 POST AD PAGE
 app.get('/post-ad', (req, res) => {
-    if (!req.session.user) {
+    if (!firebaseInitialized || !req.session.user) {
         return res.redirect('/login');
     }
     res.sendFile(path.join(__dirname, 'public', 'post-ad.html'));
 });
 
-// 📦 PROCESS AD POSTING WITH IMAGE UPLOAD
+// 📦 PROCESS AD POSTING (Only if Firebase is initialized)
 app.post('/post-ad', upload.single('image'), async (req, res) => {
-    if (!req.session.user) {
+    if (!firebaseInitialized || !req.session.user) {
         return res.redirect('/login');
     }
 
@@ -255,7 +294,6 @@ app.post('/post-ad', upload.single('image'), async (req, res) => {
         const { title, description, price, category, location } = req.body;
         const image = req.file ? '/uploads/' + req.file.filename : null;
 
-        // Save to Firebase Database
         const db = admin.database();
         const adRef = db.ref('ads').push();
         
@@ -287,7 +325,7 @@ app.post('/post-ad', upload.single('image'), async (req, res) => {
     }
 });
 
-// 👑 ADMIN PANEL - POWERFUL DASHBOARD
+// 👑 ADMIN PANEL
 app.get('/admin', requireAdmin, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
@@ -309,11 +347,15 @@ app.get('/logout', (req, res) => {
 });
 
 // ==========================================
-// 💬 MESSAGING SYSTEM - BUYER-SELLER COMMUNICATION
+// 💬 MESSAGING SYSTEM (Only if Firebase is initialized)
 // ==========================================
 
 // 🔄 GET MESSAGES BETWEEN TWO USERS
 app.get('/api/messages/:otherUserId', async (req, res) => {
+    if (!firebaseInitialized) {
+        return res.status(503).json({ error: 'Firebase service unavailable' });
+    }
+    
     if (!req.session.user) {
         return res.status(401).json({ error: 'Not authenticated' });
     }
@@ -325,7 +367,6 @@ app.get('/api/messages/:otherUserId', async (req, res) => {
         const db = admin.database();
         const messagesRef = db.ref('messages');
         
-        // Get messages between current user and other user
         const snapshot = await messagesRef
             .orderByChild('conversationId')
             .equalTo([currentUserId, otherUserId].sort().join('_'))
@@ -339,9 +380,7 @@ app.get('/api/messages/:otherUserId', async (req, res) => {
             });
         });
 
-        // Sort by timestamp
         messages.sort((a, b) => a.timestamp - b.timestamp);
-        
         res.json(messages);
     } catch (error) {
         console.error('Get messages error:', error);
@@ -351,6 +390,10 @@ app.get('/api/messages/:otherUserId', async (req, res) => {
 
 // 📨 SEND MESSAGE
 app.post('/api/messages/send', async (req, res) => {
+    if (!firebaseInitialized) {
+        return res.status(503).json({ error: 'Firebase service unavailable' });
+    }
+    
     if (!req.session.user) {
         return res.status(401).json({ error: 'Not authenticated' });
     }
@@ -394,6 +437,10 @@ app.post('/api/messages/send', async (req, res) => {
 
 // 👥 GET USER CONVERSATIONS
 app.get('/api/conversations', async (req, res) => {
+    if (!firebaseInitialized) {
+        return res.status(503).json({ error: 'Firebase service unavailable' });
+    }
+    
     if (!req.session.user) {
         return res.status(401).json({ error: 'Not authenticated' });
     }
@@ -439,7 +486,6 @@ app.get('/api/conversations', async (req, res) => {
             }
         });
 
-        // Convert to array and sort by last message time
         const conversationsArray = Object.values(conversations)
             .sort((a, b) => b.lastTimestamp - a.lastTimestamp);
 
@@ -452,7 +498,7 @@ app.get('/api/conversations', async (req, res) => {
 
 // 🆕 ADD MESSAGE BUTTON TO ADS
 app.get('/ad-with-chat/:adId', async (req, res) => {
-    if (!req.session.user) {
+    if (!firebaseInitialized || !req.session.user) {
         return res.redirect('/login');
     }
 
@@ -514,7 +560,7 @@ app.get('/ad-with-chat/:adId', async (req, res) => {
 
 // 💬 CHAT PAGE ROUTE
 app.get('/chat', (req, res) => {
-    if (!req.session.user) {
+    if (!firebaseInitialized || !req.session.user) {
         return res.redirect('/login');
     }
     res.sendFile(__dirname + '/public/messaging/chat.html');
@@ -524,10 +570,11 @@ app.get('/chat', (req, res) => {
 // 🚀 START SERVER - POWER ON!
 // ==========================================
 
-app.listen(PORT, '0.0.0.0', () => { // ✅ FIXED: Binds to all network interfaces
+app.listen(PORT, '0.0.0.0', () => {
     console.log('🎉 baeem Server Running!');
-    console.log('🌐 Visit: http://localhost:' + PORT); // ✅ FIXED: Dynamic port display
+    console.log('🌐 Visit: http://localhost:' + PORT);
     console.log('🔥 Powered by Node.js + Express');
     console.log('💎 Professional Grade Activated');
     console.log('🇵🇰❤️🇨🇳 Pak-China Friendship Forever!');
+    console.log('🔧 Firebase Status:', firebaseInitialized ? 'Connected' : 'Limited Mode');
 });
