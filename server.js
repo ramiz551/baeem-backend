@@ -39,30 +39,48 @@ app.use(express.json());
 
 // Session management (user login)
 app.use(session({
-    secret: 'baeem-super-secret-key-2025',
+    secret: process.env.SESSION_SECRET || 'baeem-super-secret-key-2025',
     resave: false,
     saveUninitialized: false,
-    cookie: { secure: false, maxAge: 24 * 60 * 60 * 1000 }
+    cookie: { 
+        secure: process.env.NODE_ENV === 'production',
+        maxAge: 24 * 60 * 60 * 1000 
+    }
 }));
 
 // ================================
-// 🔐 FIREBASE INITIALIZATION WITH ERROR HANDLING
+// 🔐 FIREBASE INITIALIZATION - PRODUCTION READY
 // ================================
 
-// ✅ CRITICAL FIX: Handle missing serviceAccountKey.json gracefully
 let firebaseInitialized = false;
 
 try {
-    const serviceAccount = require('./serviceAccountKey.json');
-    admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount),
-        databaseURL: "https://hol-sell-marketplace-default-rtdb.firebaseio.com"
-    });
-    firebaseInitialized = true;
-    console.log('✅ Firebase Admin SDK initialized successfully');
+    // Method 1: Environment variables (for production)
+    if (process.env.FIREBASE_PRIVATE_KEY) {
+        admin.initializeApp({
+            credential: admin.credential.cert({
+                projectId: process.env.FIREBASE_PROJECT_ID,
+                privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+                clientEmail: process.env.FIREBASE_CLIENT_EMAIL
+            }),
+            databaseURL: process.env.FIREBASE_DATABASE_URL
+        });
+        firebaseInitialized = true;
+        console.log('✅ Firebase Admin SDK initialized via environment variables');
+    }
+    // Method 2: Service account file (for local development)
+    else {
+        const serviceAccount = require('./serviceAccountKey.json');
+        admin.initializeApp({
+            credential: admin.credential.cert(serviceAccount),
+            databaseURL: "https://hol-sell-marketplace-default-rtdb.firebaseio.com"
+        });
+        firebaseInitialized = true;
+        console.log('✅ Firebase Admin SDK initialized via service account file');
+    }
 } catch (error) {
-    console.log('⚠️ Firebase service account not found - running in limited mode');
-    console.log('ℹ️ Health checks and basic routes will work, but Firebase features will be disabled');
+    console.log('❌ Firebase initialization failed:', error.message);
+    console.log('⚠️ Running in limited mode - basic routes only');
     firebaseInitialized = false;
 }
 
