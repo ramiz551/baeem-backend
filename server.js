@@ -49,51 +49,47 @@ app.use(session({
 }));
 
 // ================================
-// 🔐 FIREBASE INITIALIZATION - PRODUCTION READY
+// 🔐 FIREBASE INITIALIZATION - 100% CORRECT
 // ================================
 
 let firebaseInitialized = false;
 
 try {
-    // Method 1: Environment variables (for production)
-    if (process.env.FIREBASE_PRIVATE_KEY) {
-        admin.initializeApp({
-            credential: admin.credential.cert({
-                projectId: process.env.FIREBASE_PROJECT_ID,
-                privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-                clientEmail: process.env.FIREBASE_CLIENT_EMAIL
-            }),
-            databaseURL: process.env.FIREBASE_DATABASE_URL
-        });
-        firebaseInitialized = true;
-        console.log('✅ Firebase Admin SDK initialized via environment variables');
-    }
-    // Method 2: Service account file (for local development)
-    else {
-        const serviceAccount = require('./serviceAccountKey.json');
-        admin.initializeApp({
-            credential: admin.credential.cert(serviceAccount),
-            databaseURL: "https://hol-sell-marketplace-default-rtdb.firebaseio.com"
-        });
-        firebaseInitialized = true;
-        console.log('✅ Firebase Admin SDK initialized via service account file');
-    }
+    // ABSOLUTE PATH where Northflank mounts the secret file
+    const serviceAccount = require('/app/serviceAccountKey.json');
+    
+    admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount),
+        databaseURL: process.env.FIREBASE_DATABASE_URL || "https://hol-sell-marketplace-default-rtdb.firebaseio.com"
+    });
+    
+    firebaseInitialized = true;
+    console.log('✅ Firebase Admin SDK initialized successfully!');
+    console.log('📧 Connected as:', serviceAccount.client_email);
 } catch (error) {
     console.log('❌ Firebase initialization failed:', error.message);
     console.log('⚠️ Running in limited mode - basic routes only');
     firebaseInitialized = false;
 }
 
-// Admin security middleware (only if Firebase is initialized)
-const ADMIN_EMAILS = ['xyzdar6@gmail.com'];
+// ================================
+// 🔐 ADMIN SECURITY - SUPER ADMIN ACCESS
+// ================================
+
+const ADMIN_EMAILS = [
+    'xyzdar6@gmail.com'  // ONLY YOU CAN ACCESS ADMIN PANEL
+];
+
+// Middleware to check if user is admin - CORRECTED VERSION
 function requireAdmin(req, res, next) {
     if (!firebaseInitialized) {
         return res.status(503).send('Firebase service unavailable');
     }
     
     const userEmail = req.session.user ? req.session.user.email : null;
+    
     if (userEmail && ADMIN_EMAILS.includes(userEmail)) {
-        next();
+        next(); // Allow access
     } else {
         res.status(403).send(`
             <h2>🚫 ACCESS DENIED</h2>
@@ -134,7 +130,7 @@ app.get('/health', (req, res) => {
         status: 'OK', 
         message: 'BAEEM Backend is running perfectly!',
         firebase: firebaseInitialized ? 'Connected' : 'Disabled',
-        timestamp: Date.now(),
+        timestamp: new Date().toISOString(),
         version: '1.0.0'
     });
 });
@@ -451,137 +447,6 @@ app.post('/api/messages/send', async (req, res) => {
         console.error('Send message error:', error);
         res.status(500).json({ error: 'Failed to send message' });
     }
-});
-
-// 👥 GET USER CONVERSATIONS
-app.get('/api/conversations', async (req, res) => {
-    if (!firebaseInitialized) {
-        return res.status(503).json({ error: 'Firebase service unavailable' });
-    }
-    
-    if (!req.session.user) {
-        return res.status(401).json({ error: 'Not authenticated' });
-    }
-
-    try {
-        const currentUserId = req.session.user.uid;
-        const db = admin.database();
-        const messagesRef = db.ref('messages');
-
-        const snapshot = await messagesRef
-            .orderByChild('conversationId')
-            .once('value');
-
-        const conversations = {};
-        
-        snapshot.forEach(childSnapshot => {
-            const message = childSnapshot.val();
-            const convId = message.conversationId;
-
-            if (convId.includes(currentUserId)) {
-                const otherUserId = message.senderId === currentUserId ? 
-                    message.receiverId : message.senderId;
-                
-                if (!conversations[otherUserId]) {
-                    conversations[otherUserId] = {
-                        otherUserId: otherUserId,
-                        otherUserName: message.senderId === currentUserId ? 
-                            message.receiverName : message.senderName,
-                        lastMessage: message.message,
-                        lastTimestamp: message.timestamp,
-                        unreadCount: 0
-                    };
-                }
-
-                if (message.timestamp > conversations[otherUserId].lastTimestamp) {
-                    conversations[otherUserId].lastMessage = message.message;
-                    conversations[otherUserId].lastTimestamp = message.timestamp;
-                }
-
-                if (!message.read && message.receiverId === currentUserId) {
-                    conversations[otherUserId].unreadCount++;
-                }
-            }
-        });
-
-        const conversationsArray = Object.values(conversations)
-            .sort((a, b) => b.lastTimestamp - a.lastTimestamp);
-
-        res.json(conversationsArray);
-    } catch (error) {
-        console.error('Get conversations error:', error);
-        res.status(500).json({ error: 'Failed to get conversations' });
-    }
-});
-
-// 🆕 ADD MESSAGE BUTTON TO ADS
-app.get('/ad-with-chat/:adId', async (req, res) => {
-    if (!firebaseInitialized || !req.session.user) {
-        return res.redirect('/login');
-    }
-
-    try {
-        const adId = req.params.adId;
-        const db = admin.database();
-        const adRef = db.ref('ads').child(adId);
-        const adSnapshot = await adRef.once('value');
-        
-        if (!adSnapshot.exists()) {
-            return res.status(404).send('Ad not found');
-        }
-
-        const ad = adSnapshot.val();
-        
-        res.send(`
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <title>${ad.title} - BAEEM</title>
-                <link rel="stylesheet" href="/css/style.css">
-                <style>
-                    .ad-detail { max-width: 800px; margin: 2rem auto; padding: 2rem; background: white; border-radius: 10px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); }
-                    .chat-btn { background: #667eea; color: white; padding: 1rem 2rem; border: none; border-radius: 5px; cursor: pointer; font-size: 1.1rem; margin-top: 2rem; }
-                    .chat-btn:hover { background: #5a6fd8; }
-                </style>
-            </head>
-            <body>
-                <header class="main-header">
-                    <div class="container">
-                        <a href="/" class="logo">BAEEM</a>
-                        <nav class="user-nav">
-                            <a href="/dashboard" class="nav-link">Dashboard</a>
-                            <a href="/logout" class="nav-link">Logout</a>
-                        </nav>
-                    </div>
-                </header>
-                <div class="ad-detail">
-                    <h1>${ad.title}</h1>
-                    <p class="ad-price">$${ad.price}</p>
-                    <p>${ad.description}</p>
-                    <button class="chat-btn" onclick="startChat('${ad.userId}', '${adId}')">
-                        💬 Chat with Seller
-                    </button>
-                </div>
-                <script>
-                    function startChat(sellerId, adId) {
-                        window.location.href = '/chat?userId=' + sellerId + '&adId=' + adId;
-                    }
-                </script>
-            </body>
-            </html>
-        `);
-    } catch (error) {
-        console.error('Ad detail error:', error);
-        res.status(500).send('Error loading ad');
-    }
-});
-
-// 💬 CHAT PAGE ROUTE
-app.get('/chat', (req, res) => {
-    if (!firebaseInitialized || !req.session.user) {
-        return res.redirect('/login');
-    }
-    res.sendFile(__dirname + '/public/messaging/chat.html');
 });
 
 // ==========================================
